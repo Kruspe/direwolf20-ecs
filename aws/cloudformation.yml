@@ -1,0 +1,333 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Direwolf20-Server-Launcher
+
+Parameters:
+  ParamOpUsername:
+    Type: AWS::SSM::Parameter::Value<String>
+  ParamDuckDnsSubDomain:
+    Type: AWS::SSM::Parameter::Value<String>
+  ParamStartLambdaVersion:
+    Type: AWS::SSM::Parameter::Value<String>
+  ParamCidrRange:
+    Type: String
+    Default: 10.0.0.0/28
+
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+        - Status: Enabled
+          NoncurrentVersionExpirationInDays: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref ParamCidrRange
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref ParamCidrRange
+      VpcId: !Ref Vpc
+      MapPublicIpOnLaunch: true
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  RouteInternetGateway:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      GatewayId: !Ref InternetGateway
+      DestinationCidrBlock: 0.0.0.0/0
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref Subnet
+
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: Direwolf20
+      GroupDescription: SecurityGroup for Direwolf20 ECS Service
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 25565
+        ToPort: 25565
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 25565
+        ToPort: 25565
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+
+  EcsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: Direwolf20
+      RetentionInDays: 7
+  EcsCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref AutoScalingGroup
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+  EcsCapacityProviderAssociation:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      CapacityProviders:
+      - !Ref EcsCapacityProvider
+      Cluster: !Ref EcsCluster
+      DefaultCapacityProviderStrategy:
+      - CapacityProvider: !Ref EcsCapacityProvider
+        Weight: 1
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: Direwolf20
+  EcsService:
+    Type: AWS::ECS::Service
+    Properties:
+      CapacityProviderStrategy:
+      - CapacityProvider: !Ref EcsCapacityProvider
+        Weight: 1
+      ServiceName: Direwolf20
+      Cluster: !Ref EcsCluster
+      DesiredCount: 0
+      TaskDefinition: !Ref Direwolf20TaskDef
+  Direwolf20TaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+      - Name: direwolf20-server
+        Image: krusp3/direwolf20:latest
+        MemoryReservation: 1024
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: !Ref EcsLogGroup
+            awslogs-region: !Ref AWS::Region
+            awslogs-stream-prefix: ecs
+        Environment:
+        - Name: ECS_CLUSTER_ARN
+          Value: !GetAtt [ EcsCluster, Arn ]
+        - Name: ECS_SERVICE_ARN
+          Value: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/Direwolf20/Direwolf20
+        - Name: BUCKET
+          Value: !Ref Bucket
+        - Name: DUCK_DNS_DOMAIN
+          Value: !Ref ParamDuckDnsSubDomain
+        - Name: OP_USERNAME
+          Value: !Ref ParamOpUsername
+        Secrets:
+        - Name: DUCK_DNS_TOKEN
+          ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/direwolf20/dns/token
+        PortMappings:
+        - ContainerPort: 25565
+          HostPort: 25565
+          Protocol: tcp
+        StopTimeout: 120
+      NetworkMode: host
+      ExecutionRoleArn: !GetAtt [ Direwolf20TaskExecutionRole, Arn ]
+      TaskRoleArn: !GetAtt [ Direwolf20TaskRole, Arn ]
+  Direwolf20TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ecs-tasks.amazonaws.com
+          Action:
+          - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ssm:GetParameters'
+            Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/direwolf20/dns/token
+          - Effect: Allow
+            Action:
+            - 'logs:CreateLogStream'
+            - 'logs:PutLogEvents'
+            - 'logs:DescribeLogStreams'
+            Resource: !GetAtt [ EcsLogGroup, Arn ]
+  Direwolf20TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ecs-tasks.amazonaws.com
+          Action:
+          - 'sts:AssumeRole'
+          Condition:
+            ArnLike:
+              AWS:SourceArn: !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:*
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:GetObject'
+            - 's3:PutObject'
+            - 's3:ListBucket'
+            Resource:
+            - !Join [ '', [ !GetAtt [ Bucket, Arn ], '/*' ] ]
+            - !GetAtt [ Bucket, Arn ]
+          - Effect: Allow
+            Action:
+            - 'ecs:UpdateService'
+            Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/Direwolf20/Direwolf20
+            Condition:
+              ArnEquals:
+                ecs:cluster: !GetAtt [ EcsCluster, Arn ]
+
+  EcsInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+  EcsInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+      - !Ref EcsInstanceRole
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: ami-02310b327100620e0 # ECS optimized amazon linux 2 arm64
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: 0.03
+            SpotInstanceType: one-time
+        InstanceType: t4g.large
+        BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            VolumeType: gp3
+        CreditSpecification:
+          CpuCredits: standard
+        IamInstanceProfile:
+          Name: !Ref EcsInstanceProfile
+        SecurityGroupIds:
+        - !Ref SecurityGroup
+        UserData: !Base64
+          Fn::Join:
+          - ''
+          - - |
+              #!/bin/bash -xe
+            - echo ECS_CLUSTER=
+            - !Ref EcsCluster
+            - |2
+               >> /etc/ecs/ecs.config
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      DesiredCapacity: 0
+      MaxSize: 1
+      MinSize: 0
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt [ LaunchTemplate, LatestVersionNumber ]
+      VPCZoneIdentifier:
+      - !Ref Subnet
+
+  StartLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - 'sts:AssumeRole'
+      ManagedPolicyArns:
+      - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ecs:UpdateService'
+            Resource: !Ref EcsService
+            Condition:
+              ArnEquals:
+                ecs:cluster: !GetAtt [ EcsCluster, Arn ]
+  StartLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: direwolf20-start-server-lambda
+        S3Key: backend.zip
+        S3ObjectVersion: !Ref ParamStartLambdaVersion
+      Handler: bootstrap
+      Role: !GetAtt [ StartLambdaRole, Arn ]
+      Architectures: [arm64]
+      Runtime: provided.al2
+      Environment:
+        Variables:
+          LOG_LEVEL: error
+          ECS_CLUSTER_ARN: !GetAtt [ EcsCluster, Arn ]
+          ECS_SERVICE_ARN: !Ref EcsService
+  StartLambdaUri:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt [ StartLambda, Arn ]
+  StartLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StartLambda
+      Action: 'lambda:InvokeFunctionUrl'
+      Principal: '*'
+      FunctionUrlAuthType: NONE

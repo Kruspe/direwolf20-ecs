@@ -1,0 +1,9 @@
+version: "3"
+
+tasks:
+  push:
+    desc: Build and push new docker image
+    cmds:
+    - docker build --platform linux/arm64 -t direwolf20 .
+    - docker tag direwolf20:latest krusp3/direwolf20:latest
+    - docker push krusp3/direwolf20:latest

@@ -1,0 +1,14 @@
+version: '3'
+  
+includes:
+  aws:
+    taskfile: aws/
+    dir: aws/
+
+  image:
+    taskfile: image/
+    dir: image/
+
+  src:
+    taskfile: src/
+    dir: src/

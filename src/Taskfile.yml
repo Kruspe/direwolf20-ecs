@@ -1,0 +1,21 @@
+version: "3"
+
+tasks:
+  push:
+    desc: Push new lambda build to s3
+    deps: [ build ]
+    cmds:
+    - task: upload
+
+  build:
+    cmds:
+    - rm -rf out
+    - GOOS=linux GOARCH=arm64 go build -mod=vendor -o out/bootstrap main.go
+    - zip -j out/backend.zip out/bootstrap
+
+  upload:
+    cmds:
+    - aws ssm put-parameter --name /direwolf20/lambda/version --value {{.LAMBDA_VERSION_ID}} --type String --overwrite --profile direwolf20
+    vars:
+      LAMBDA_VERSION_ID:
+        sh: aws s3api put-object --bucket direwolf20-start-server-lambda --key backend.zip --body out/backend.zip --profile direwolf20 | jq -r .VersionId

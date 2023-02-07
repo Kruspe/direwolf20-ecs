@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Direwolf20 Deployment Helper
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: direwolf20-start-server-lambda
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+        - Status: Enabled
+          NoncurrentVersionExpirationInDays: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+
+  # Deployment-User
+  DeploymentUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: Direwolf20-Deployment
+      Policies:
+      - PolicyName: services
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'apigateway:*'
+            - 'autoscaling:*'
+            - 'cloudformation:*'
+            - 'ecs:*'
+            - 'ec2:*'
+            - 'iam:*'
+            - 'lambda:*'
+            - 'logs:*'
+            - 'ssm:*'
+            - 's3:*'
+            Resource: '*'

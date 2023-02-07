@@ -1,0 +1,18 @@
+version: "3"
+
+tasks:
+  deploy-server:
+    desc: Deploy direwolf20 stack
+    cmds:
+    - aws cloudformation deploy --template-file cloudformation.yml --stack-name Direwolf20-Server --capabilities CAPABILITY_IAM
+      --parameter-overrides
+      ParamOpUsername=/direwolf20/op/username
+      ParamDuckDnsSubDomain=/direwolf20/dns/subdomain
+      ParamStartLambdaVersion=/direwolf20/lambda/version
+      --profile direwolf20
+
+  deploy-helper:
+    desc: Deploy deployment helper
+    cmds:
+    - aws cloudformation deploy --template-file deployment-helper.yml --stack-name Direwolf20-DeploymentHelper --capabilities CAPABILITY_NAMED_IAM
+      --profile direwolf20
